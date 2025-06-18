@@ -1,0 +1,13 @@
+name: DeepAlts
+version: '1.0'
+main: net.ravenclaw.deepAlts.DeepAlts
+api-version: '1.21'
+commands:
+  alts:
+    description: Show accounts with the same latest IP
+    usage: /alts <player name or UUID> [uuid]
+    permission: deepalts.use
+  deepalts:
+    description: Show accounts connected by any IP
+    usage: /deepalts <player name or UUID> [uuid]
+    permission: deepalts.use

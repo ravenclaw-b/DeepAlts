@@ -1,0 +1,43 @@
+# macOS
+.DS_Store
+
+# IDEs
+.settings/
+.project
+.classpath
+.idea/
+
+# Build output
+bin/
+build/
+target/
+run/
+
+# Gradle
+.gradle/
+gradle/*
+!gradle/wrapper/
+!gradle/wrapper/gradle-wrapper.properties
+!gradle/wrapper/gradle-wrapper.jar
+
+# Java
+*.class
+*.jar
+*.war
+*.nar
+*.ear
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+
+# Logs
+*.log
+hs_err_pid*
+
+# BlueJ
+*.ctxt
+
+# Mobile Tools for Java (J2ME)
+.mtj.tmp/
