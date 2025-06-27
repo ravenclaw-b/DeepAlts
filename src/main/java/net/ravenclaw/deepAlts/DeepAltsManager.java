@@ -18,13 +18,14 @@ public class DeepAltsManager implements Listener {
 
     private final Map<UUID, Set<String>> uuidToIpsMap = new HashMap<>();
     private final Map<UUID, String> uuidToLatestIpMap = new HashMap<>();
-    private final Map<UUID, Set<UUID>> altGraph = new HashMap<>();
+    private final DeepAltsGraph altGraph;
     private final Plugin plugin;
     private final File dataFile;
 
     public DeepAltsManager(Plugin plugin) {
         this.plugin = plugin;
         this.dataFile = new File(plugin.getDataFolder(), "data.yml");
+        this.altGraph = new DeepAltsGraph(plugin);
 
         if (!plugin.getDataFolder().exists()) {
             plugin.getDataFolder().mkdirs();
@@ -40,18 +41,13 @@ public class DeepAltsManager implements Listener {
         uuidToIpsMap.computeIfAbsent(uuid, k -> new HashSet<>()).add(ip);
         uuidToLatestIpMap.put(uuid, ip);
 
-        // Update graph
-        for (Map.Entry<UUID, Set<String>> entry : uuidToIpsMap.entrySet()) {
-            UUID otherUuid = entry.getKey();
-            if (!otherUuid.equals(uuid) && entry.getValue().contains(ip)) {
-                altGraph.computeIfAbsent(uuid, k -> new HashSet<>()).add(otherUuid);
-                altGraph.computeIfAbsent(otherUuid, k -> new HashSet<>()).add(uuid);
-            }
-        }
+        // Update the graph with the new connection
+        altGraph.updateOnPlayerJoin(uuid, ip, uuidToIpsMap);
 
+        // Save both data and graph
         saveAsync();
+        altGraph.saveAsync();
     }
-
 
     public void saveAsync() {
         CompletableFuture.runAsync(() -> {
@@ -75,62 +71,54 @@ public class DeepAltsManager implements Listener {
 
     public void loadAsync(Runnable afterLoad) {
         CompletableFuture.runAsync(() -> {
-            if (!dataFile.exists()) return;
+            // Load IP data first
+            loadIpData();
 
-            YamlConfiguration config = YamlConfiguration.loadConfiguration(dataFile);
-
-            ConfigurationSection ipsSection = config.getConfigurationSection("ips");
-            if (ipsSection != null) {
-                for (String key : ipsSection.getKeys(false)) {
-                    try {
-                        UUID uuid = UUID.fromString(key);
-                        List<String> ipList = ipsSection.getStringList(key);
-                        uuidToIpsMap.put(uuid, new HashSet<>(ipList));
-                    } catch (IllegalArgumentException e) {
-                        plugin.getLogger().warning("Invalid UUID in IP data: " + key);
-                    }
+            // Then load the graph, but if it doesn't exist, rebuild it from IP data
+            altGraph.loadAsync(() -> {
+                // If graph is empty (new install or corrupted), rebuild from IP data
+                if (altGraph.size() == 0 && !uuidToIpsMap.isEmpty()) {
+                    plugin.getLogger().info("Graph is empty, rebuilding from IP data...");
+                    altGraph.rebuildFromIpData(uuidToIpsMap);
+                    altGraph.saveAsync();
                 }
-            }
 
-            ConfigurationSection latestSection = config.getConfigurationSection("latest");
-            if (latestSection != null) {
-                for (String key : latestSection.getKeys(false)) {
-                    try {
-                        UUID uuid = UUID.fromString(key);
-                        String ip = latestSection.getString(key);
-                        if (ip != null) {
-                            uuidToLatestIpMap.put(uuid, ip);
-                        }
-                    } catch (IllegalArgumentException e) {
-                        plugin.getLogger().warning("Invalid UUID in latest IP data: " + key);
-                    }
+                if (afterLoad != null) {
+                    Bukkit.getScheduler().runTask(plugin, afterLoad);
                 }
-            }
-
-            rebuildGraph();
-
-            Bukkit.getScheduler().runTask(plugin, afterLoad);
+            });
         });
     }
 
+    private void loadIpData() {
+        if (!dataFile.exists()) return;
 
-    private void rebuildGraph() {
-        altGraph.clear();
-        Map<String, Set<UUID>> ipToUuids = new HashMap<>();
+        YamlConfiguration config = YamlConfiguration.loadConfiguration(dataFile);
 
-        for (Map.Entry<UUID, Set<String>> entry : uuidToIpsMap.entrySet()) {
-            UUID uuid = entry.getKey();
-            for (String ip : entry.getValue()) {
-                ipToUuids.computeIfAbsent(ip, k -> new HashSet<>()).add(uuid);
+        ConfigurationSection ipsSection = config.getConfigurationSection("ips");
+        if (ipsSection != null) {
+            for (String key : ipsSection.getKeys(false)) {
+                try {
+                    UUID uuid = UUID.fromString(key);
+                    List<String> ipList = ipsSection.getStringList(key);
+                    uuidToIpsMap.put(uuid, new HashSet<>(ipList));
+                } catch (IllegalArgumentException e) {
+                    plugin.getLogger().warning("Invalid UUID in IP data: " + key);
+                }
             }
         }
 
-        for (Set<UUID> uuids : ipToUuids.values()) {
-            for (UUID u1 : uuids) {
-                for (UUID u2 : uuids) {
-                    if (!u1.equals(u2)) {
-                        altGraph.computeIfAbsent(u1, k -> new HashSet<>()).add(u2);
+        ConfigurationSection latestSection = config.getConfigurationSection("latest");
+        if (latestSection != null) {
+            for (String key : latestSection.getKeys(false)) {
+                try {
+                    UUID uuid = UUID.fromString(key);
+                    String ip = latestSection.getString(key);
+                    if (ip != null) {
+                        uuidToLatestIpMap.put(uuid, ip);
                     }
+                } catch (IllegalArgumentException e) {
+                    plugin.getLogger().warning("Invalid UUID in latest IP data: " + key);
                 }
             }
         }
@@ -152,23 +140,25 @@ public class DeepAltsManager implements Listener {
 
     /** Returns all connected UUIDs via shared IPs */
     public Set<UUID> getDeepAlts(UUID start) {
-        Set<UUID> visited = new HashSet<>();
-        Queue<UUID> queue = new LinkedList<>();
+        return altGraph.getDeepAlts(start);
+    }
 
-        visited.add(start);
-        queue.add(start);
+    /**
+     * Forces a rebuild of the graph from current IP data
+     * Useful for maintenance or if the graph gets corrupted
+     */
+    public void rebuildGraph() {
+        altGraph.rebuildFromIpData(uuidToIpsMap);
+        altGraph.saveAsync();
+        plugin.getLogger().info("Graph rebuilt from IP data.");
+    }
 
-        while (!queue.isEmpty()) {
-            UUID current = queue.poll();
-            for (UUID neighbor : altGraph.getOrDefault(current, Collections.emptySet())) {
-                if (visited.add(neighbor)) {
-                    queue.add(neighbor);
-                }
-            }
-        }
-
-        visited.remove(start);
-        return visited;
+    /**
+     * Saves both IP data and graph
+     */
+    public void saveAll() {
+        saveAsync();
+        altGraph.saveAsync();
     }
 
     public Map<UUID, Set<String>> getUuidToIpsMap() {
@@ -179,7 +169,7 @@ public class DeepAltsManager implements Listener {
         return uuidToLatestIpMap;
     }
 
-    public Map<UUID, Set<UUID>> getAltGraph() {
+    public DeepAltsGraph getAltGraph() {
         return altGraph;
     }
 

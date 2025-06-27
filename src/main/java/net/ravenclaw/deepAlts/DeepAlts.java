@@ -9,7 +9,7 @@ public class DeepAlts extends JavaPlugin {
     public void onEnable() {
         manager = new DeepAltsManager(this);
         getServer().getPluginManager().registerEvents(manager, this);
-        manager.loadAsync(() -> getLogger().info("DeepAlts data loaded."));
+        manager.loadAsync(() -> getLogger().info("DeepAlts data and graph loaded."));
 
         DeepAltsCommand altsCommand = new DeepAltsCommand(manager);
         getCommand("alts").setExecutor(altsCommand);
@@ -20,6 +20,14 @@ public class DeepAlts extends JavaPlugin {
 
     @Override
     public void onDisable() {
-        manager.saveAsync();
+        if (manager != null) {
+            // Save both IP data and graph
+            manager.saveAll();
+            getLogger().info("DeepAlts data and graph saved on disable.");
+        }
+    }
+
+    public DeepAltsManager getManager() {
+        return manager;
     }
 }
