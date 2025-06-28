@@ -9,21 +9,44 @@ public class DeepAlts extends JavaPlugin {
     public void onEnable() {
         manager = new DeepAltsManager(this);
         getServer().getPluginManager().registerEvents(manager, this);
-        manager.loadAsync(() -> getLogger().info("DeepAlts data and graph loaded."));
+        manager.loadAsync(() -> getLogger().info("DeepAlts data, graph, and proxy cache loaded."));
 
+        // Register lookup commands
         DeepAltsCommand altsCommand = new DeepAltsCommand(manager);
-        getCommand("alts").setExecutor(altsCommand);
-        getCommand("alts").setTabCompleter(altsCommand);
-        getCommand("deepalts").setExecutor(altsCommand);
-        getCommand("deepalts").setTabCompleter(altsCommand);
+        if (getCommand("alts") != null) {
+            getCommand("alts").setExecutor(altsCommand);
+            getCommand("alts").setTabCompleter(altsCommand);
+        } else {
+            getLogger().warning("Command 'alts' not found in plugin.yml");
+        }
+
+        if (getCommand("deepalts") != null) {
+            getCommand("deepalts").setExecutor(altsCommand);
+            getCommand("deepalts").setTabCompleter(altsCommand);
+        } else {
+            getLogger().warning("Command 'deepalts' not found in plugin.yml");
+        }
+
+        // Register config command
+        DeepAltsConfigCommand configCommand = new DeepAltsConfigCommand(manager);
+        if (getCommand("deepaltsconfig") != null) {
+            getCommand("deepaltsconfig").setExecutor(configCommand);
+            getCommand("deepaltsconfig").setTabCompleter(configCommand);
+        } else {
+            getLogger().warning("Command 'deepaltsconfig' not found in plugin.yml");
+        }
     }
 
     @Override
     public void onDisable() {
         if (manager != null) {
-            // Save both IP data and graph
-            manager.saveAll();
-            getLogger().info("DeepAlts data and graph saved on disable.");
+            try {
+                // Save both IP data and graph
+                manager.saveAll();
+                getLogger().info("DeepAlts data, graph, and proxy cache saved on disable.");
+            } catch (Exception e) {
+                getLogger().severe("Error saving data on disable: " + e.getMessage());
+            }
         }
     }
 

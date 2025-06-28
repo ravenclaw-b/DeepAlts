@@ -36,9 +36,14 @@ public class DeepAltsGraph {
 
     /**
      * Updates the graph when a player joins with an IP
-     * Connects this UUID to all other UUIDs that have used this IP
+     * Connects this UUID to all other UUIDs that have used this IP (only if IP is not a proxy)
      */
-    public void updateOnPlayerJoin(UUID playerUuid, String ip, Map<UUID, Set<String>> uuidToIpsMap) {
+    public void updateOnPlayerJoin(UUID playerUuid, String ip, Map<UUID, Set<String>> uuidToIpsMap, boolean isProxy) {
+        // Skip creating connections if the IP is a proxy
+        if (isProxy) {
+            return;
+        }
+
         // Find all UUIDs that have used this IP
         Set<UUID> uuidsWithSameIp = new HashSet<>();
         for (Map.Entry<UUID, Set<String>> entry : uuidToIpsMap.entrySet()) {
@@ -56,30 +61,100 @@ public class DeepAltsGraph {
     }
 
     /**
-     * Rebuilds the entire graph from IP data
+     * Rebuilds the entire graph from IP data, excluding proxy IPs
+     * This method now checks uncached IPs against the proxy API
      */
-    public void rebuildFromIpData(Map<UUID, Set<String>> uuidToIpsMap) {
+    public void rebuildFromIpData(Map<UUID, Set<String>> uuidToIpsMap, ProxyCache proxyCache) {
         altGraph.clear();
 
-        // Create a map of IP -> Set of UUIDs
-        Map<String, Set<UUID>> ipToUuids = new HashMap<>();
-        for (Map.Entry<UUID, Set<String>> entry : uuidToIpsMap.entrySet()) {
-            UUID uuid = entry.getKey();
-            for (String ip : entry.getValue()) {
-                ipToUuids.computeIfAbsent(ip, k -> new HashSet<>()).add(uuid);
+        // Collect all unique IPs first
+        Set<String> allIps = new HashSet<>();
+        for (Set<String> ips : uuidToIpsMap.values()) {
+            allIps.addAll(ips);
+        }
+
+        plugin.getLogger().info("Starting graph rebuild with " + allIps.size() + " unique IPs to check...");
+
+        // Check all uncached IPs for proxy status
+        List<CompletableFuture<Void>> proxyCheckFutures = new ArrayList<>();
+
+        for (String ip : allIps) {
+            Boolean cachedStatus = proxyCache.getCachedProxyStatus(ip);
+            if (cachedStatus == null) {
+                // IP not cached, need to check it
+                CompletableFuture<Void> future = proxyCache.isProxy(ip).thenAccept(isProxy -> {
+                    // The result is automatically cached by the ProxyCache.isProxy method
+                    plugin.getLogger().info("Checked uncached IP " + ip + " during rebuild: " + (isProxy ? "proxy" : "not proxy"));
+                });
+                proxyCheckFutures.add(future);
             }
         }
 
-        // Connect all UUIDs that share an IP
+        // Wait for all proxy checks to complete, then rebuild the graph
+        CompletableFuture<Void> allChecks = CompletableFuture.allOf(proxyCheckFutures.toArray(new CompletableFuture[0]));
+
+        allChecks.thenRun(() -> {
+            plugin.getLogger().info("All proxy checks completed. Building graph connections...");
+            buildGraphFromCheckedIps(uuidToIpsMap, proxyCache);
+            plugin.getLogger().info("Graph rebuild completed with " + altGraph.size() + " nodes.");
+            // Save the graph after successful rebuild
+            saveAsync();
+        }).exceptionally(throwable -> {
+            plugin.getLogger().severe("Error during graph rebuild proxy checks: " + throwable.getMessage());
+            // Still try to build the graph with whatever data we have
+            buildGraphFromCheckedIps(uuidToIpsMap, proxyCache);
+            // Save even after partial rebuild
+            saveAsync();
+            return null;
+        });
+    }
+
+    /**
+     * Helper method to build the graph after all proxy statuses are determined
+     */
+    private void buildGraphFromCheckedIps(Map<UUID, Set<String>> uuidToIpsMap, ProxyCache proxyCache) {
+        // Create a map of IP -> Set of UUIDs (excluding proxy IPs)
+        Map<String, Set<UUID>> ipToUuids = new HashMap<>();
+        int skippedProxyIps = 0;
+        int unknownIps = 0;
+
+        for (Map.Entry<UUID, Set<String>> entry : uuidToIpsMap.entrySet()) {
+            UUID uuid = entry.getKey();
+            for (String ip : entry.getValue()) {
+                Boolean isProxy = proxyCache.getCachedProxyStatus(ip);
+
+                if (isProxy == null) {
+                    // Still unknown after checks - treat as not proxy but log it
+                    unknownIps++;
+                    plugin.getLogger().warning("IP " + ip + " proxy status unknown after rebuild checks, treating as not proxy");
+                    ipToUuids.computeIfAbsent(ip, k -> new HashSet<>()).add(uuid);
+                } else if (isProxy) {
+                    // Skip proxy IPs
+                    skippedProxyIps++;
+                    continue;
+                } else {
+                    // Not a proxy, include it
+                    ipToUuids.computeIfAbsent(ip, k -> new HashSet<>()).add(uuid);
+                }
+            }
+        }
+
+        // Connect all UUIDs that share a non-proxy IP
+        int connectionsCreated = 0;
         for (Set<UUID> uuids : ipToUuids.values()) {
             for (UUID u1 : uuids) {
                 for (UUID u2 : uuids) {
                     if (!u1.equals(u2)) {
                         addConnection(u1, u2);
+                        connectionsCreated++;
                     }
                 }
             }
         }
+
+        plugin.getLogger().info("Graph rebuild stats - Connections created: " + connectionsCreated +
+                ", Proxy IPs skipped: " + skippedProxyIps +
+                ", Unknown IPs: " + unknownIps);
     }
 
     /**

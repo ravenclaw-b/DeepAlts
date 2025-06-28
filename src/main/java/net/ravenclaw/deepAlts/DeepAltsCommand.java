@@ -20,6 +20,7 @@ public class DeepAltsCommand implements CommandExecutor, TabCompleter {
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (args.length < 1 || args.length > 2) {
             sender.sendMessage("§cUsage: /" + label + " <player name or UUID> [uuid]");
+            sender.sendMessage("§7Use §f/deepaltsconfig§7 for admin commands");
             return true;
         }
 
@@ -58,7 +59,6 @@ public class DeepAltsCommand implements CommandExecutor, TabCompleter {
 
             displayTarget = forceUuidOutput ? targetUuid.toString() : (targetPlayer.getName() != null ? targetPlayer.getName() : targetUuid.toString());
 
-
             Set<UUID> results = deep ? manager.getDeepAlts(targetUuid) : manager.getAlts(targetUuid);
             String type = deep ? "§9DeepAlts" : "§3Alts";
 
@@ -90,12 +90,17 @@ public class DeepAltsCommand implements CommandExecutor, TabCompleter {
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (args.length == 1) {
             String prefix = args[0].toLowerCase();
-            return Arrays.stream(Bukkit.getOfflinePlayers())
+            List<String> completions = new ArrayList<>();
+
+            // Add player names
+            completions.addAll(Arrays.stream(Bukkit.getOfflinePlayers())
                     .map(OfflinePlayer::getName)
                     .filter(Objects::nonNull)
                     .filter(name -> name.toLowerCase().startsWith(prefix))
-                    .limit(100)
-                    .collect(Collectors.toList());
+                    .limit(50)
+                    .collect(Collectors.toList()));
+
+            return completions;
         } else if (args.length == 2) {
             return Collections.singletonList("uuid");
         }

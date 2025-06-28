@@ -1,13 +1,47 @@
 name: DeepAlts
-version: '1.0'
+version: 1.1
 main: net.ravenclaw.deepAlts.DeepAlts
-api-version: '1.21'
+api-version: 1.21
+author: Ravenclaw
+description: Advanced alt account detection plugin using IP tracking and graph connections
+
 commands:
   alts:
-    description: Show accounts with the same latest IP
+    description: Find alt accounts that share the same recent IP address
     usage: /alts <player name or UUID> [uuid]
-    permission: deepalts.use
+    permission: deepalts.lookup
+    aliases: [alt]
+
   deepalts:
-    description: Show accounts connected by any IP
+    description: Find all connected alt accounts through shared IP relationships
     usage: /deepalts <player name or UUID> [uuid]
-    permission: deepalts.use
+    permission: deepalts.lookup
+    aliases: [dalts]
+
+  deepaltsconfig:
+    description: Configure and manage DeepAlts settings
+    usage: /deepaltsconfig <status|rebuild|clearcache|save|reload|info>
+    permission: deepalts.admin
+    aliases: [daltconfig]
+
+permissions:
+  deepalts.*:
+    description: Grants all DeepAlts permissions
+    default: false
+    children:
+      deepalts.lookup: true
+      deepalts.admin: true
+
+  deepalts.lookup:
+    description: Allows using /alts and /deepalts commands to lookup alt accounts
+    default: op
+
+  deepalts.admin:
+    description: Allows using admin commands and managing DeepAlts configuration
+    default: op
+
+depend: []
+softdepend: []
+loadbefore: []
+
+prefix: DeepAlts
