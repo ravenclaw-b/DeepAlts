@@ -1,4 +1,4 @@
-package net.ravenclaw.deepAlts;
+package net.ravenclaw.deepalts;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;

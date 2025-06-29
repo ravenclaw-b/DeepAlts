@@ -1,4 +1,4 @@
-package net.ravenclaw.deepAlts;
+package net.ravenclaw.deepalts;
 
 import org.bukkit.plugin.java.JavaPlugin;
 

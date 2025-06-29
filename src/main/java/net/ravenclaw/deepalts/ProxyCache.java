@@ -1,4 +1,4 @@
-package net.ravenclaw.deepAlts;
+package net.ravenclaw.deepalts;
 
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.Plugin;
