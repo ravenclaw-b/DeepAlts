@@ -39,9 +39,5 @@ permissions:
   deepalts.admin:
     description: Allows using admin commands and managing DeepAlts configuration
     default: op
-
-depend: []
-softdepend: []
-loadbefore: []
-
+    
 prefix: DeepAlts
