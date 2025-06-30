@@ -57,7 +57,9 @@ public class DeepAltsCommand implements CommandExecutor, TabCompleter {
                 return;
             }
 
-            displayTarget = forceUuidOutput ? targetUuid.toString() : (targetPlayer.getName() != null ? targetPlayer.getName() : targetUuid.toString());
+            String targetDisplayName = forceUuidOutput ? targetUuid.toString() : (targetPlayer.getName() != null ? targetPlayer.getName() : targetUuid.toString());
+            String targetColor = targetPlayer.isOnline() ? "§a" : "§7";
+            displayTarget = targetColor + targetDisplayName;
 
             Set<UUID> results = deep ? manager.getDeepAlts(targetUuid) : manager.getAlts(targetUuid);
             String type = deep ? "§9DeepAlts" : "§3Alts";
@@ -70,9 +72,10 @@ public class DeepAltsCommand implements CommandExecutor, TabCompleter {
             }
 
             List<String> formatted = results.stream().map(uuid -> {
-                if (forceUuidOutput) return uuid.toString();
-                String name = getNameFromCache(uuid);
-                return name != null ? name : uuid.toString();
+                OfflinePlayer player = Bukkit.getOfflinePlayer(uuid);
+                String name = forceUuidOutput ? uuid.toString() : (player.getName() != null ? player.getName() : uuid.toString());
+                String color = player.isOnline() ? "§a" : "§7";
+                return color + name;
             }).collect(Collectors.toList());
 
             sender.sendMessage("§f §b" + String.join("§f, §b", formatted));
