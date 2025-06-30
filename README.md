@@ -36,7 +36,7 @@ DeepAlts helps server staff find potential alternate accounts (alts) by checking
 
 ## Requirements
 
-* PaperMC 1.21+
+* PaperMC 1.20+
 * Java 17+
 
 ## Installation
