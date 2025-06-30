@@ -35,6 +35,8 @@ public class DeepAlts extends JavaPlugin {
         } else {
             getLogger().warning("Command 'deepaltsconfig' not found in plugin.yml");
         }
+
+        //getLogger().info("");
     }
 
     @Override
