@@ -11,7 +11,6 @@ public class DeepAlts extends JavaPlugin {
         getServer().getPluginManager().registerEvents(manager, this);
         manager.loadAsync(() -> getLogger().info("DeepAlts data, graph, and proxy cache loaded."));
 
-        // Register lookup commands
         DeepAltsCommand altsCommand = new DeepAltsCommand(manager);
         if (getCommand("alts") != null) {
             getCommand("alts").setExecutor(altsCommand);
@@ -35,15 +34,12 @@ public class DeepAlts extends JavaPlugin {
         } else {
             getLogger().warning("Command 'deepaltsconfig' not found in plugin.yml");
         }
-
-        //getLogger().info("");
     }
 
     @Override
     public void onDisable() {
         if (manager != null) {
             try {
-                // Save both IP data and graph
                 manager.saveAll();
                 getLogger().info("DeepAlts data, graph, and proxy cache saved on disable.");
             } catch (Exception e) {

@@ -122,9 +122,6 @@ public class IPCheck {
         }
     }
 
-    /**
-     * Check if IP is private/local (RFC 1918, loopback, etc.)
-     */
     private static boolean isPrivateIP(String ip) {
         if (!isValidIP(ip)) {
             return false;

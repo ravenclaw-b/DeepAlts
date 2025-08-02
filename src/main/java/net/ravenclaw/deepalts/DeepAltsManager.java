@@ -18,8 +18,8 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class DeepAltsManager implements Listener {
 
-    private final Map<UUID, Set<String>> uuidToIpsMap = new ConcurrentHashMap<>();
-    private final Map<UUID, String> uuidToLatestIpMap = new ConcurrentHashMap<>();
+    private final Map<UUID, Set<String>> uuidToHashedIpsMap = new ConcurrentHashMap<>(); // UUID -> Set of hashed IPs
+    private final Map<UUID, String> uuidToLatestHashedIpMap = new ConcurrentHashMap<>(); // UUID -> latest hashed IP
     private final DeepAltsGraph altGraph;
     private final ProxyCache proxyCache;
     private final Plugin plugin;
@@ -56,47 +56,50 @@ public class DeepAltsManager implements Listener {
         }
 
         try {
-            // Update IP maps first (these are thread-safe with ConcurrentHashMap)
-            uuidToIpsMap.computeIfAbsent(uuid, k -> ConcurrentHashMap.newKeySet()).add(ip);
-            uuidToLatestIpMap.put(uuid, ip);
+            // Check proxy status and get hashed IP
+            proxyCache.checkProxy(ip).thenAccept(result -> {
+                String hashedIp = result.getHashedIp();
+                boolean isProxy = result.isProxy();
 
-            // Save IP data immediately (async)
-            saveAsync();
+                // Update IP maps with hashed IP (these are thread-safe with ConcurrentHashMap)
+                uuidToHashedIpsMap.computeIfAbsent(uuid, k -> ConcurrentHashMap.newKeySet()).add(hashedIp);
+                uuidToLatestHashedIpMap.put(uuid, hashedIp);
 
-            // Check proxy status and update graph in a coordinated way
-            proxyCache.isProxy(ip).thenAccept(isProxy -> {
-                // Use write lock to ensure graph updates are atomic
+                // Save IP data immediately (async)
+                saveAsync();
+
+                // Update graph in a coordinated way
                 graphLock.writeLock().lock();
                 try {
                     // Update the graph with the new connection (only if not a proxy)
-                    altGraph.updateOnPlayerJoin(uuid, ip, getUuidToIpsMapSnapshot(), isProxy);
+                    altGraph.updateOnPlayerJoin(uuid, hashedIp, getUuidToHashedIpsMapSnapshot(), isProxy);
 
                     // Save graph after update
                     altGraph.saveAsync();
 
                     if (isProxy) {
-                        plugin.getLogger().info("Player " + uuid + " joined from proxy IP " + ip + " - not creating graph connections");
+                        plugin.getLogger().info("Player " + uuid + " joined from proxy IP (hash: " + hashedIp.substring(0, 8) + "...) - not creating graph connections");
                     } else {
-                        plugin.getLogger().info("Player " + uuid + " joined from IP " + ip + " - graph updated");
+                        plugin.getLogger().info("Player " + uuid + " joined from IP (hash: " + hashedIp.substring(0, 8) + "...) - graph updated");
                     }
                 } finally {
                     graphLock.writeLock().unlock();
                 }
             }).exceptionally(throwable -> {
-                plugin.getLogger().severe("Error processing proxy check for " + uuid + " from " + ip + ": " + throwable.getMessage());
+                plugin.getLogger().severe("Error processing proxy check for " + uuid + ": " + throwable.getMessage());
                 return null;
             });
         } catch (Exception e) {
-            plugin.getLogger().severe("Error in onAsyncPreLogin for " + uuid + " from " + ip + ": " + e.getMessage());
+            plugin.getLogger().severe("Error in onAsyncPreLogin for " + uuid + ": " + e.getMessage());
         }
     }
 
     /**
-     * Creates a thread-safe snapshot of the UUID to IPs map
+     * Creates a thread-safe snapshot of the UUID to hashed IPs map
      */
-    private Map<UUID, Set<String>> getUuidToIpsMapSnapshot() {
+    private Map<UUID, Set<String>> getUuidToHashedIpsMapSnapshot() {
         Map<UUID, Set<String>> snapshot = new HashMap<>();
-        for (Map.Entry<UUID, Set<String>> entry : uuidToIpsMap.entrySet()) {
+        for (Map.Entry<UUID, Set<String>> entry : uuidToHashedIpsMap.entrySet()) {
             snapshot.put(entry.getKey(), new HashSet<>(entry.getValue()));
         }
         return snapshot;
@@ -108,15 +111,15 @@ public class DeepAltsManager implements Listener {
                 YamlConfiguration config = new YamlConfiguration();
 
                 // Create snapshots to avoid concurrent modification
-                Map<UUID, Set<String>> ipsSnapshot = getUuidToIpsMapSnapshot();
-                Map<UUID, String> latestSnapshot = new HashMap<>(uuidToLatestIpMap);
+                Map<UUID, Set<String>> hashedIpsSnapshot = getUuidToHashedIpsMapSnapshot();
+                Map<UUID, String> latestSnapshot = new HashMap<>(uuidToLatestHashedIpMap);
 
-                for (Map.Entry<UUID, Set<String>> entry : ipsSnapshot.entrySet()) {
+                for (Map.Entry<UUID, Set<String>> entry : hashedIpsSnapshot.entrySet()) {
                     String key = entry.getKey().toString();
-                    config.set("ips." + key, new ArrayList<>(entry.getValue()));
+                    config.set("hashed_ips." + key, new ArrayList<>(entry.getValue()));
                 }
                 for (Map.Entry<UUID, String> entry : latestSnapshot.entrySet()) {
-                    config.set("latest." + entry.getKey().toString(), entry.getValue());
+                    config.set("latest_hashed." + entry.getKey().toString(), entry.getValue());
                 }
 
                 config.save(dataFile);
@@ -134,18 +137,18 @@ public class DeepAltsManager implements Listener {
             try {
                 // Load proxy cache first
                 proxyCache.loadAsync(() -> {
-                    // Load IP data
-                    loadIpData();
+                    // Load hashed IP data
+                    loadHashedIpData();
 
-                    // Then load the graph, but if it doesn't exist, rebuild it from IP data
+                    // Then load the graph, but if it doesn't exist, rebuild it from hashed IP data
                     altGraph.loadAsync(() -> {
                         // Use write lock for graph rebuild
                         graphLock.writeLock().lock();
                         try {
-                            // If graph is empty (new install or corrupted), rebuild from IP data
-                            if (altGraph.size() == 0 && !uuidToIpsMap.isEmpty()) {
-                                plugin.getLogger().info("Graph is empty, rebuilding from IP data (excluding proxies)...");
-                                altGraph.rebuildFromIpData(getUuidToIpsMapSnapshot(), proxyCache);
+                            // If graph is empty (new install or corrupted), rebuild from hashed IP data
+                            if (altGraph.size() == 0 && !uuidToHashedIpsMap.isEmpty()) {
+                                plugin.getLogger().info("Graph is empty, rebuilding from hashed IP data (excluding proxies)...");
+                                altGraph.rebuildFromHashedIpData(getUuidToHashedIpsMapSnapshot(), proxyCache);
                                 altGraph.saveAsync();
                             }
                         } finally {
@@ -166,63 +169,149 @@ public class DeepAltsManager implements Listener {
         });
     }
 
-    private void loadIpData() {
+    private void loadHashedIpData() {
         if (!dataFile.exists()) return;
 
         try {
             YamlConfiguration config = YamlConfiguration.loadConfiguration(dataFile);
 
-            ConfigurationSection ipsSection = config.getConfigurationSection("ips");
-            if (ipsSection != null) {
-                for (String key : ipsSection.getKeys(false)) {
+            // Load hashed IPs
+            ConfigurationSection hashedIpsSection = config.getConfigurationSection("hashed_ips");
+            if (hashedIpsSection != null) {
+                for (String key : hashedIpsSection.getKeys(false)) {
                     try {
                         UUID uuid = UUID.fromString(key);
-                        List<String> ipList = ipsSection.getStringList(key);
-                        Set<String> ipSet = ConcurrentHashMap.newKeySet();
-                        ipSet.addAll(ipList);
-                        uuidToIpsMap.put(uuid, ipSet);
+                        List<String> hashedIpList = hashedIpsSection.getStringList(key);
+                        Set<String> hashedIpSet = ConcurrentHashMap.newKeySet();
+                        hashedIpSet.addAll(hashedIpList);
+                        uuidToHashedIpsMap.put(uuid, hashedIpSet);
                     } catch (IllegalArgumentException e) {
-                        plugin.getLogger().warning("Invalid UUID in IP data: " + key);
+                        plugin.getLogger().warning("Invalid UUID in hashed IP data: " + key);
                     }
                 }
             }
 
-            ConfigurationSection latestSection = config.getConfigurationSection("latest");
-            if (latestSection != null) {
-                for (String key : latestSection.getKeys(false)) {
+            // Load latest hashed IPs
+            ConfigurationSection latestHashedSection = config.getConfigurationSection("latest_hashed");
+            if (latestHashedSection != null) {
+                for (String key : latestHashedSection.getKeys(false)) {
                     try {
                         UUID uuid = UUID.fromString(key);
-                        String ip = latestSection.getString(key);
-                        if (ip != null && !ip.trim().isEmpty()) {
-                            uuidToLatestIpMap.put(uuid, ip);
+                        String hashedIp = latestHashedSection.getString(key);
+                        if (hashedIp != null && !hashedIp.trim().isEmpty()) {
+                            uuidToLatestHashedIpMap.put(uuid, hashedIp);
                         }
                     } catch (IllegalArgumentException e) {
-                        plugin.getLogger().warning("Invalid UUID in latest IP data: " + key);
+                        plugin.getLogger().warning("Invalid UUID in latest hashed IP data: " + key);
                     }
                 }
             }
 
-            plugin.getLogger().info("Loaded IP data for " + uuidToIpsMap.size() + " players");
+            // Migrate old data format if it exists
+            migrateOldDataFormat(config);
+
+            plugin.getLogger().info("Loaded hashed IP data for " + uuidToHashedIpsMap.size() + " players");
         } catch (Exception e) {
-            plugin.getLogger().severe("Error loading IP data: " + e.getMessage());
+            plugin.getLogger().severe("Error loading hashed IP data: " + e.getMessage());
         }
     }
 
-    /** Returns UUIDs that shared the player's most recent IP */
+    /**
+     * Migrates old format data (actual IPs) to new format (hashed IPs)
+     */
+    private void migrateOldDataFormat(YamlConfiguration config) {
+        ConfigurationSection oldIpsSection = config.getConfigurationSection("ips");
+        ConfigurationSection oldLatestSection = config.getConfigurationSection("latest");
+
+        if (oldIpsSection != null || oldLatestSection != null) {
+            plugin.getLogger().info("Migrating old IP data to hashed format...");
+            boolean migrated = false;
+
+            // Migrate old IPs section
+            if (oldIpsSection != null) {
+                for (String key : oldIpsSection.getKeys(false)) {
+                    try {
+                        UUID uuid = UUID.fromString(key);
+                        List<String> oldIpList = oldIpsSection.getStringList(key);
+
+                        Set<String> hashedIpSet = ConcurrentHashMap.newKeySet();
+                        for (String oldIp : oldIpList) {
+                            String hashedIp = hashIp(oldIp);
+                            hashedIpSet.add(hashedIp);
+                        }
+
+                        if (!hashedIpSet.isEmpty()) {
+                            uuidToHashedIpsMap.put(uuid, hashedIpSet);
+                            migrated = true;
+                        }
+                    } catch (IllegalArgumentException e) {
+                        plugin.getLogger().warning("Invalid UUID in old IP data: " + key);
+                    }
+                }
+            }
+
+            // Migrate old latest section
+            if (oldLatestSection != null) {
+                for (String key : oldLatestSection.getKeys(false)) {
+                    try {
+                        UUID uuid = UUID.fromString(key);
+                        String oldIp = oldLatestSection.getString(key);
+                        if (oldIp != null && !oldIp.trim().isEmpty()) {
+                            String hashedIp = hashIp(oldIp);
+                            uuidToLatestHashedIpMap.put(uuid, hashedIp);
+                            migrated = true;
+                        }
+                    } catch (IllegalArgumentException e) {
+                        plugin.getLogger().warning("Invalid UUID in old latest IP data: " + key);
+                    }
+                }
+            }
+
+            if (migrated) {
+                plugin.getLogger().info("Migration completed. Old IP data will be removed on next save.");
+                // Save the migrated data immediately
+                saveAsync();
+            }
+        }
+    }
+
+    /**
+     * Helper method to hash IP (same as in ProxyCache)
+     */
+    private String hashIp(String ip) {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(ip.getBytes());
+            StringBuilder hexString = new StringBuilder();
+            for (byte b : hash) {
+                String hex = Integer.toHexString(0xff & b);
+                if (hex.length() == 1) {
+                    hexString.append('0');
+                }
+                hexString.append(hex);
+            }
+            return hexString.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            plugin.getLogger().severe("SHA-256 algorithm not available: " + e.getMessage());
+            return String.valueOf(ip.hashCode());
+        }
+    }
+
+    /** Returns UUIDs that shared the player's most recent hashed IP */
     public Set<UUID> getAlts(UUID uuid) {
         Set<UUID> alts = new HashSet<>();
-        String latestIp = uuidToLatestIpMap.get(uuid);
-        if (latestIp == null) return alts;
+        String latestHashedIp = uuidToLatestHashedIpMap.get(uuid);
+        if (latestHashedIp == null) return alts;
 
-        for (Map.Entry<UUID, String> entry : uuidToLatestIpMap.entrySet()) {
-            if (!entry.getKey().equals(uuid) && latestIp.equals(entry.getValue())) {
+        for (Map.Entry<UUID, String> entry : uuidToLatestHashedIpMap.entrySet()) {
+            if (!entry.getKey().equals(uuid) && latestHashedIp.equals(entry.getValue())) {
                 alts.add(entry.getKey());
             }
         }
         return alts;
     }
 
-    /** Returns all connected UUIDs via shared IPs */
+    /** Returns all connected UUIDs via shared hashed IPs */
     public Set<UUID> getDeepAlts(UUID start) {
         graphLock.readLock().lock();
         try {
@@ -233,15 +322,15 @@ public class DeepAltsManager implements Listener {
     }
 
     /**
-     * Forces a rebuild of the graph from current IP data, excluding proxies
+     * Forces a rebuild of the graph from current hashed IP data, excluding proxies
      * Useful for maintenance or if the graph gets corrupted
      */
     public void rebuildGraph() {
         graphLock.writeLock().lock();
         try {
-            altGraph.rebuildFromIpData(getUuidToIpsMapSnapshot(), proxyCache);
+            altGraph.rebuildFromHashedIpData(getUuidToHashedIpsMapSnapshot(), proxyCache);
             altGraph.saveAsync();
-            plugin.getLogger().info("Graph rebuilt from IP data (excluding proxies).");
+            plugin.getLogger().info("Graph rebuilt from hashed IP data (excluding proxies).");
         } catch (Exception e) {
             plugin.getLogger().severe("Error rebuilding graph: " + e.getMessage());
         } finally {
@@ -250,7 +339,7 @@ public class DeepAltsManager implements Listener {
     }
 
     /**
-     * Saves both IP data and graph and proxy cache
+     * Saves both hashed IP data, graph and proxy cache
      */
     public void saveAll() {
         try {
@@ -269,12 +358,12 @@ public class DeepAltsManager implements Listener {
         }
     }
 
-    public Map<UUID, Set<String>> getUuidToIpsMap() {
-        return Collections.unmodifiableMap(uuidToIpsMap);
+    public Map<UUID, Set<String>> getUuidToHashedIpsMap() {
+        return Collections.unmodifiableMap(uuidToHashedIpsMap);
     }
 
-    public Map<UUID, String> getUuidToLatestIpMap() {
-        return Collections.unmodifiableMap(uuidToLatestIpMap);
+    public Map<UUID, String> getUuidToLatestHashedIpMap() {
+        return Collections.unmodifiableMap(uuidToLatestHashedIpMap);
     }
 
     public DeepAltsGraph getAltGraph() {

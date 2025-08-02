@@ -20,7 +20,7 @@ commands:
 
   deepaltsconfig:
     description: Configure and manage DeepAlts settings
-    usage: /deepaltsconfig <status|rebuild|clearcache|save|reload|info>
+    usage: /deepaltsconfig <status|rebuild|save|reload|info>
     permission: deepalts.admin
     aliases: [daltconfig]
 

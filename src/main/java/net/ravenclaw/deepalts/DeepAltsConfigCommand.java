@@ -24,8 +24,7 @@ public class DeepAltsConfigCommand implements CommandExecutor, TabCompleter {
         if (args.length < 1) {
             sender.sendMessage("§6=== DeepAlts Config Commands ===");
             sender.sendMessage("§f/deepaltsconfig status §7- Show plugin status");
-            sender.sendMessage("§f/deepaltsconfig rebuild §7- Rebuild graph (checks uncached IPs)");
-            sender.sendMessage("§f/deepaltsconfig clearcache §7- Clear proxy cache");
+            sender.sendMessage("§f/deepaltsconfig rebuild §7- Rebuild graph from hashed IP data");
             sender.sendMessage("§f/deepaltsconfig save §7- Manually save all data");
             sender.sendMessage("§f/deepaltsconfig reload §7- Reload all data from files");
             sender.sendMessage("§f/deepaltsconfig info §7- Show detailed statistics");
@@ -39,9 +38,6 @@ public class DeepAltsConfigCommand implements CommandExecutor, TabCompleter {
                 break;
             case "rebuild":
                 handleRebuild(sender);
-                break;
-            case "clearcache":
-                handleClearCache(sender);
                 break;
             case "save":
                 handleSave(sender);
@@ -62,14 +58,16 @@ public class DeepAltsConfigCommand implements CommandExecutor, TabCompleter {
 
     private void handleStatus(CommandSender sender) {
         sender.sendMessage("§6=== DeepAlts Status ===");
-        sender.sendMessage("§7Cache size: §f" + manager.getProxyCache().getCacheSize() + " §7entries");
+        sender.sendMessage("§7Proxy cache size: §f" + manager.getProxyCache().getCacheSize() + " §7entries");
         sender.sendMessage("§7Graph size: §f" + manager.getAltGraph().size() + " §7nodes");
         sender.sendMessage("§7Rate limit: §f" + manager.getProxyRateLimitStatus());
-        sender.sendMessage("§7IP mappings: §f" + manager.getUuidToIpsMap().size() + " §7players");
+        sender.sendMessage("§7Hashed IP mappings: §f" + manager.getUuidToHashedIpsMap().size() + " §7players");
+        sender.sendMessage("§7Privacy: §aAll IPs are stored as SHA-256 hashes");
     }
 
     private void handleRebuild(CommandSender sender) {
-        sender.sendMessage("§6Rebuilding graph from IP data (checking uncached IPs for proxy status)...");
+        sender.sendMessage("§6Rebuilding graph from hashed IP data...");
+        sender.sendMessage("§7Note: Using cached proxy statuses from previous checks.");
 
         CompletableFuture.runAsync(() -> {
             manager.rebuildGraph();
@@ -81,17 +79,13 @@ public class DeepAltsConfigCommand implements CommandExecutor, TabCompleter {
         });
     }
 
-
-    private void handleClearCache(CommandSender sender) {
-        manager.getProxyCache().clearCache();
-        sender.sendMessage("§aProxy cache cleared!");
-    }
-
     private void handleSave(CommandSender sender) {
         sender.sendMessage("§6Saving all data...");
         CompletableFuture.runAsync(() -> {
             manager.saveAll();
-            sender.sendMessage("§aAll data saved successfully!");
+            Bukkit.getScheduler().runTask(manager.getPlugin(), () -> {
+                sender.sendMessage("§aAll data saved successfully!");
+            });
         });
     }
 
@@ -107,23 +101,26 @@ public class DeepAltsConfigCommand implements CommandExecutor, TabCompleter {
     private void handleInfo(CommandSender sender) {
         sender.sendMessage("§6=== DeepAlts Detailed Info ===");
         sender.sendMessage("§7Plugin: §fDeepAlts v" + manager.getPlugin().getDescription().getVersion());
-        sender.sendMessage("§7Players tracked: §f" + manager.getUuidToIpsMap().size());
+        sender.sendMessage("§7Players tracked: §f" + manager.getUuidToHashedIpsMap().size());
         sender.sendMessage("§7Graph connections: §f" + manager.getAltGraph().size());
         sender.sendMessage("§7Proxy cache entries: §f" + manager.getProxyCache().getCacheSize());
-        sender.sendMessage("§7Latest IPs tracked: §f" + manager.getUuidToLatestIpMap().size());
+        sender.sendMessage("§7Latest hashed IPs tracked: §f" + manager.getUuidToLatestHashedIpMap().size());
         sender.sendMessage("§7Rate limiting: §f" + manager.getProxyRateLimitStatus());
+        sender.sendMessage("§7Privacy protection: §aAll IPs stored as SHA-256 hashes");
 
         // Calculate some statistics
         CompletableFuture.runAsync(() -> {
-            int totalIps = manager.getUuidToIpsMap().values().stream()
+            int totalHashedIps = manager.getUuidToHashedIpsMap().values().stream()
                     .mapToInt(Set::size)
                     .sum();
 
-            double avgIpsPerPlayer = manager.getUuidToIpsMap().isEmpty() ? 0 :
-                    (double) totalIps / manager.getUuidToIpsMap().size();
+            double avgHashedIpsPerPlayer = manager.getUuidToHashedIpsMap().isEmpty() ? 0 :
+                    (double) totalHashedIps / manager.getUuidToHashedIpsMap().size();
 
-            sender.sendMessage("§7Total IP records: §f" + totalIps);
-            sender.sendMessage("§7Average IPs per player: §f" + String.format("%.2f", avgIpsPerPlayer));
+            Bukkit.getScheduler().runTask(manager.getPlugin(), () -> {
+                sender.sendMessage("§7Total hashed IP records: §f" + totalHashedIps);
+                sender.sendMessage("§7Average hashed IPs per player: §f" + String.format("%.2f", avgHashedIpsPerPlayer));
+            });
         });
     }
 
@@ -137,7 +134,7 @@ public class DeepAltsConfigCommand implements CommandExecutor, TabCompleter {
             String prefix = args[0].toLowerCase();
             List<String> completions = new ArrayList<>();
 
-            String[] commands = {"status", "rebuild", "clearcache", "save", "reload", "info"};
+            String[] commands = {"status", "rebuild", "save", "reload", "info"};
             for (String cmd : commands) {
                 if (cmd.startsWith(prefix)) {
                     completions.add(cmd);

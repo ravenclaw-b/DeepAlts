@@ -25,21 +25,18 @@ public class DeepAltsCommand implements CommandExecutor, TabCompleter {
         }
 
         String input = args[0];
-        boolean deep = label.equalsIgnoreCase("deepalts");
+        boolean deep = label.equalsIgnoreCase("deepalts") || label.equalsIgnoreCase("dalts");
         boolean forceUuidOutput = args.length == 2 && args[1].equalsIgnoreCase("uuid");
 
         CompletableFuture.runAsync(() -> {
             UUID targetUuid;
             String displayTarget;
 
-            // Detect if input is UUID
             boolean isInputUuid = false;
             try {
-                targetUuid = UUID.fromString(input);
+                UUID.fromString(input);
                 isInputUuid = true;
-            } catch (IllegalArgumentException e) {
-                targetUuid = null;
-            }
+            } catch (IllegalArgumentException ignored) {}
 
             OfflinePlayer targetPlayer;
 
@@ -51,8 +48,7 @@ public class DeepAltsCommand implements CommandExecutor, TabCompleter {
                 targetUuid = targetPlayer.getUniqueId();
             }
 
-            // Check if the player has ever joined
-            if (targetPlayer == null || (!targetPlayer.hasPlayedBefore() && !targetPlayer.isOnline())) {
+            if (!targetPlayer.hasPlayedBefore() && !targetPlayer.isOnline()) {
                 sender.sendMessage("§cPlayer not found.");
                 return;
             }
@@ -82,11 +78,6 @@ public class DeepAltsCommand implements CommandExecutor, TabCompleter {
         });
 
         return true;
-    }
-
-    private String getNameFromCache(UUID uuid) {
-        OfflinePlayer player = Bukkit.getOfflinePlayer(uuid);
-        return (player != null && player.getName() != null) ? player.getName() : null;
     }
 
     @Override
